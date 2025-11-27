@@ -48,7 +48,13 @@ class DriveClient:
                 client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
                 refresh_token = os.environ.get('GOOGLE_REFRESH_TOKEN')
 
+                logging.info(f"Checking environment variables for OAuth credentials...")
+                logging.info(f"GOOGLE_CLIENT_ID present: {bool(client_id)}")
+                logging.info(f"GOOGLE_CLIENT_SECRET present: {bool(client_secret)}")
+                logging.info(f"GOOGLE_REFRESH_TOKEN present: {bool(refresh_token)}")
+
                 if client_id and client_secret and refresh_token:
+                    logging.info("Creating credentials object from environment variables...")
                     self.creds = Credentials(
                         None,
                         refresh_token=refresh_token,
@@ -57,13 +63,18 @@ class DriveClient:
                         client_secret=client_secret,
                         scopes=SCOPES
                     )
+                    logging.info(f"Credentials object created. Valid before refresh: {self.creds.valid}")
+
                     # Refresh the token immediately to make credentials valid
                     try:
+                        logging.info("Attempting to refresh token...")
                         self.creds.refresh(Request())
-                        logging.info("Authenticated with Google Drive API (Env Vars) and refreshed token.")
+                        logging.info(f"Token refreshed successfully. Valid after refresh: {self.creds.valid}")
                     except Exception as e:
-                        logging.error(f"Failed to refresh token from env vars: {e}")
+                        logging.error(f"Failed to refresh token from env vars: {e}", exc_info=True)
                         self.creds = None
+                else:
+                    logging.warning("Missing one or more environment variables for OAuth authentication")
 
             # 4. If still no creds, try Interactive Local Flow (credentials.json)
             if (not self.creds or not self.creds.valid) and os.path.exists('credentials.json'):
