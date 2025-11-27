@@ -9,7 +9,7 @@ import yfinance as yf
 from fpdf import FPDF
 import warnings
 import logging
-from modules.empyrical import (
+from EigenLedger.modules.empyrical import (
     cagr,
     cum_returns,
     stability_of_timeseries,

@@ -7,3 +7,5 @@ dist/
 build/
 *.egg-info/
 poetry.lock
+credentials.json
+token.json

@@ -3,6 +3,9 @@ import io
 import json
 import logging
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
@@ -16,18 +19,70 @@ class DriveClient:
         self._authenticate()
 
     def _authenticate(self):
-        """Authenticate using Service Account JSON from environment variable."""
+        """Authenticate using OAuth 2.0 (Local/Env) or Service Account."""
         try:
-            creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-            if not creds_json:
-                logging.warning("GOOGLE_CREDENTIALS_JSON not found in environment variables. Drive integration disabled.")
-                return
+            # 1. Try Local OAuth 2.0 (token.json)
+            if os.path.exists('token.json'):
+                try:
+                    self.creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+                    logging.info("Loaded credentials from token.json")
+                except Exception as e:
+                    logging.warning(f"Error loading token.json: {e}")
 
-            creds_dict = json.loads(creds_json)
-            self.creds = service_account.Credentials.from_service_account_info(
-                creds_dict, scopes=SCOPES)
-            self.service = build('drive', 'v3', credentials=self.creds)
-            logging.info("Successfully authenticated with Google Drive API.")
+            # 2. Refresh valid token if expired
+            if self.creds and self.creds.expired and self.creds.refresh_token:
+                try:
+                    self.creds.refresh(Request())
+                    logging.info("Refreshed expired token")
+                except Exception as e:
+                    logging.warning(f"Error refreshing token: {e}")
+                    self.creds = None
+
+            # 3. If no valid creds yet, try Env Vars (CI/CD)
+            if not self.creds or not self.creds.valid:
+                client_id = os.environ.get('GOOGLE_CLIENT_ID')
+                client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
+                refresh_token = os.environ.get('GOOGLE_REFRESH_TOKEN')
+
+                if client_id and client_secret and refresh_token:
+                    self.creds = Credentials(
+                        None,
+                        refresh_token=refresh_token,
+                        token_uri="https://oauth2.googleapis.com/token",
+                        client_id=client_id,
+                        client_secret=client_secret,
+                        scopes=SCOPES
+                    )
+                    logging.info("Authenticated with Google Drive API (Env Vars).")
+
+            # 4. If still no creds, try Interactive Local Flow (credentials.json)
+            if (not self.creds or not self.creds.valid) and os.path.exists('credentials.json'):
+                try:
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        'credentials.json', SCOPES)
+                    self.creds = flow.run_local_server(port=0)
+                    # Save the credentials for the next run
+                    with open('token.json', 'w') as token:
+                        token.write(self.creds.to_json())
+                    logging.info("Authenticated via Interactive Local Flow.")
+                except Exception as e:
+                    logging.error(f"Interactive login failed: {e}")
+
+            # 5. Fallback to Service Account
+            if not self.creds or not self.creds.valid:
+                creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+                if creds_json:
+                    creds_dict = json.loads(creds_json)
+                    self.creds = service_account.Credentials.from_service_account_info(
+                        creds_dict, scopes=SCOPES)
+                    logging.info("Authenticated with Google Drive API (Service Account).")
+
+            if self.creds and self.creds.valid:
+                self.service = build('drive', 'v3', credentials=self.creds)
+                logging.info("Drive Service built successfully.")
+            else:
+                logging.warning("No valid Google Drive credentials found. Drive integration disabled.")
+
         except Exception as e:
             logging.error(f"Failed to authenticate with Google Drive: {e}")
 
@@ -108,3 +163,18 @@ class DriveClient:
         except Exception as e:
             logging.error(f"Error uploading file to Drive: {e}")
             return False
+
+    def list_files(self, page_size=10):
+        """List files in the Drive."""
+        if not self.service:
+            logging.warning("Drive service not initialized. Skipping list files.")
+            return []
+
+        try:
+            results = self.service.files().list(
+                pageSize=page_size, fields="nextPageToken, files(id, name, mimeType)").execute()
+            items = results.get('files', [])
+            return items
+        except Exception as e:
+            logging.error(f"Error listing files: {e}")
+            return []
