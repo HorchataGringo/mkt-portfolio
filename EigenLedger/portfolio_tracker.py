@@ -404,12 +404,18 @@ def main():
         drive_client = DriveClient()
         email_client = EmailClient()
 
-        # Download tickers from Drive
+        # Download tickers from Drive only if not using Sheets
+        USE_SHEETS = os.environ.get("USE_SHEETS", "false").lower() == "true"
         FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID")
-        if drive_client.download_file("dad_tickers.txt", str(dad_tickers_path), folder_id=FOLDER_ID):
-            logging.info("Downloaded dad_tickers.txt from Drive.")
+
+        if not USE_SHEETS:
+            # Only download CSV file if we're not reading from Sheets
+            if drive_client.download_file("dad_tickers.txt", str(dad_tickers_path), folder_id=FOLDER_ID):
+                logging.info("Downloaded dad_tickers.txt from Drive.")
+            else:
+                logging.warning("Could not download dad_tickers.txt from Drive. Using local copy if available.")
         else:
-            logging.warning("Could not download dad_tickers.txt from Drive. Using local copy if available.")
+            logging.info("USE_SHEETS=true - Will read portfolio from Google Sheets instead of CSV")
 
     # Load portfolio (from Sheets if USE_SHEETS=true, otherwise CSV)
     print(f"Loading portfolio...")
@@ -462,6 +468,13 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
     daily_changes = None
     trend_chart_path = base_dir / "portfolio_trends.png"
 
+    # Debug logging for Sheets integration
+    logging.info(f"ENABLE_CLOUD: {ENABLE_CLOUD}")
+    logging.info(f"drive_client exists: {drive_client is not None}")
+    if drive_client:
+        logging.info(f"drive_client.sheets_service exists: {hasattr(drive_client, 'sheets_service')}")
+        logging.info(f"drive_client.sheets_service value: {drive_client.sheets_service is not None if hasattr(drive_client, 'sheets_service') else 'N/A'}")
+
     if ENABLE_CLOUD and drive_client and hasattr(drive_client, 'sheets_service') and drive_client.sheets_service:
         print("\n" + "="*80)
         print("📈 HISTORICAL TRACKING")
@@ -471,18 +484,23 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
             from EigenLedger.historical_tracker import HistoricalTracker
 
             # Initialize tracker
+            logging.info("Initializing HistoricalTracker...")
             tracker = HistoricalTracker(drive_client)
 
             # Create current snapshot
+            logging.info("Creating current snapshot...")
             current_snapshot = tracker.create_snapshot(df, metrics)
 
             # Get previous snapshot
+            logging.info("Retrieving previous snapshot...")
             previous_snapshot = tracker.get_last_snapshot()
 
             # Calculate daily changes
+            logging.info("Calculating daily changes...")
             daily_changes = tracker.calculate_daily_changes(current_snapshot, previous_snapshot)
 
             # Save current snapshot
+            logging.info("Saving current snapshot...")
             tracker.save_snapshot(current_snapshot)
 
             # Save daily changes
@@ -491,16 +509,22 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
 
                 if daily_changes['is_first_run']:
                     print("✅ First snapshot created - historical tracking started!")
+                    logging.info("First snapshot created successfully")
                 else:
                     print(f"✅ Daily changes calculated (vs {daily_changes['prev_date']})")
                     print(f"   Portfolio Value Change: ${daily_changes['value_change']:,.2f} ({daily_changes['value_change_pct']:+.2f}%)")
+                    logging.info(f"Daily changes saved: {daily_changes['date']} vs {daily_changes['prev_date']}")
 
             # Generate trend chart
+            logging.info("Generating trend chart...")
             tracker.generate_trend_chart(filename=str(trend_chart_path), days=90)
 
         except Exception as e:
-            logging.error(f"Error in historical tracking: {e}")
+            logging.error(f"Error in historical tracking: {e}", exc_info=True)
             logging.warning("Continuing without historical tracking...")
+    else:
+        logging.warning("Historical tracking skipped - Sheets service not available")
+        logging.warning("This means snapshots and daily changes will NOT be saved to Google Sheets")
 
     # Cloud Actions: Upload and Email
     if ENABLE_CLOUD:

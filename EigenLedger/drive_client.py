@@ -75,9 +75,22 @@ class DriveClient:
 
 
             if self.creds and self.creds.valid:
-                self.service = build('drive', 'v3', credentials=self.creds)
-                self.sheets_service = build('sheets', 'v4', credentials=self.creds)
-                logging.info("Drive and Sheets services built successfully.")
+                try:
+                    self.service = build('drive', 'v3', credentials=self.creds)
+                    logging.info("Drive service built successfully.")
+                except Exception as e:
+                    logging.error(f"Failed to build Drive service: {e}")
+                    self.service = None
+
+                try:
+                    self.sheets_service = build('sheets', 'v4', credentials=self.creds)
+                    logging.info("Sheets service built successfully.")
+                except Exception as e:
+                    logging.error(f"Failed to build Sheets service: {e}")
+                    self.sheets_service = None
+
+                if self.service or self.sheets_service:
+                    logging.info("At least one Google API service initialized successfully.")
             else:
                 logging.warning("No valid Google Drive credentials found. Drive and Sheets integration disabled.")
 
