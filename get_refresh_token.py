@@ -1,8 +1,11 @@
 from google_auth_oauthlib.flow import InstalledAppFlow
 import os
 
-# Scopes required
-SCOPES = ['https://www.googleapis.com/auth/drive']
+# Scopes required for Drive and Sheets API
+SCOPES = [
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/spreadsheets'
+]
 
 def main():
     print("--- Google Drive Refresh Token Generator ---")

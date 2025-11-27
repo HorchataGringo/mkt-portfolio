@@ -4,7 +4,7 @@
 
 ```bash
 # 1. Test the tracker locally
-poetry run portfolio-tracker
+poetry run portfolio_tracker.py
 
 # Expected: Portfolio analysis runs successfully
 ```

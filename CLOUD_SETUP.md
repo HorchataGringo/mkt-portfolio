@@ -92,19 +92,75 @@ If you renamed your local branch from `master` to `main`, you must also update G
 
 This ensures the GitHub Action runs on the correct branch.
 
-## 4. Testing
+## 4. Google Sheets Integration Setup
+
+The portfolio tracker now uses Google Sheets for:
+- **Reading portfolio holdings** from the "holdings" sheet
+- **Storing daily snapshots** in the "snapshots" sheet (auto-created)
+- **Tracking daily changes** in the "daily_changes" sheet (auto-created)
+
+### Spreadsheet Setup
+
+1. **Create a Google Sheet named exactly "Portfolio"** (case-sensitive)
+2. **Create a sheet tab named "holdings"** with these columns:
+   ```
+   Symbol | Shares | PurchaseDate
+   ```
+   - Symbol: Ticker symbol (e.g., NVDY)
+   - Shares: Number of shares (e.g., 100)
+   - PurchaseDate: Date in mm/dd/yyyy format (e.g., 01/15/2024)
+
+3. **Add your current positions** to the holdings sheet
+4. The tracker will automatically create "snapshots" and "daily_changes" sheets on first run
+
+**Example holdings sheet:**
+```
+Symbol  | Shares | PurchaseDate
+--------|--------|-------------
+NVDY    | 100    | 01/15/2024
+MSTY    | 100    | 02/20/2024
+AMZY    | 100    | 03/10/2024
+```
+
+For detailed schema documentation, see [SHEETS_SCHEMA.md](SHEETS_SCHEMA.md).
+
+### IMPORTANT: Regenerate OAuth Token
+
+**The Sheets API requires a new permission scope.** Your existing refresh token will NOT work.
+
+**You MUST regenerate your refresh token:**
+
+1. The `get_refresh_token.py` script has been updated with new scopes
+2. Run it again:
+   ```bash
+   poetry run python get_refresh_token.py
+   ```
+3. A browser will open - **log in and grant permissions** (you'll see a new Sheets permission request)
+4. Copy the new `GOOGLE_REFRESH_TOKEN` from the output
+5. **Update the GitHub secret** `GOOGLE_REFRESH_TOKEN` with the new value
+
+**Without regenerating, the tracker will fail with authentication errors.**
+
+## 5. Testing
 
 **Important:** The GitHub Action uses **OAuth 2.0** with the Refresh Token you generated. This means:
 - The workflow does **NOT** require interactive login
 - It uses the `GOOGLE_REFRESH_TOKEN`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` secrets
 - The refresh token is valid long-term and will automatically refresh the access token
+- **New**: The token now includes Sheets API permissions
 
 **To Test:**
-1.  Ensure all secrets from Steps 1-2 are configured in GitHub
-2.  Go to the **Actions** tab in your repository
-3.  Select **"Daily Portfolio Update"**
-4.  Click **Run workflow** → **Run workflow** (green button)
-5.  Watch the workflow execute and check for any errors
+1.  Ensure the "Portfolio" spreadsheet exists with "holdings" sheet populated
+2.  Ensure you've regenerated your refresh token (see Step 4 above)
+3.  Ensure all secrets are configured in GitHub (including new GOOGLE_REFRESH_TOKEN)
+4.  Go to the **Actions** tab in your repository
+5.  Select **"Daily Portfolio Update"**
+6.  Click **Run workflow** → **Run workflow** (green button)
+7.  Watch the workflow execute and check for:
+    - "Loaded X positions from Google Sheets" in logs
+    - "First snapshot created" or "Daily changes calculated" in logs
+    - Email received with daily update
+8.  Check your "Portfolio" spreadsheet for new "snapshots" and "daily_changes" sheets
 
 ## 5. Local Execution (Optional)
 

@@ -9,13 +9,17 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
-# Scopes required for Drive API
-SCOPES = ['https://www.googleapis.com/auth/drive']
+# Scopes required for Drive and Sheets API
+SCOPES = [
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/spreadsheets'
+]
 
 class DriveClient:
     def __init__(self):
         self.creds = None
         self.service = None
+        self.sheets_service = None
         self._authenticate()
 
     def _authenticate(self):
@@ -72,9 +76,10 @@ class DriveClient:
 
             if self.creds and self.creds.valid:
                 self.service = build('drive', 'v3', credentials=self.creds)
-                logging.info("Drive Service built successfully.")
+                self.sheets_service = build('sheets', 'v4', credentials=self.creds)
+                logging.info("Drive and Sheets services built successfully.")
             else:
-                logging.warning("No valid Google Drive credentials found. Drive integration disabled.")
+                logging.warning("No valid Google Drive credentials found. Drive and Sheets integration disabled.")
 
         except Exception as e:
             logging.error(f"Failed to authenticate with Google Drive: {e}")
@@ -171,3 +176,188 @@ class DriveClient:
         except Exception as e:
             logging.error(f"Error listing files: {e}")
             return []
+
+    # ========== Google Sheets API Methods ==========
+
+    def find_spreadsheet_by_name(self, name):
+        """Find spreadsheet by name and return its ID."""
+        if not self.service:
+            logging.warning("Drive service not initialized.")
+            return None
+
+        try:
+            query = f"name = '{name}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false"
+            results = self.service.files().list(
+                q=query, pageSize=1, fields="files(id, name)").execute()
+            items = results.get('files', [])
+
+            if items:
+                logging.info(f"Found spreadsheet '{name}' (ID: {items[0]['id']})")
+                return items[0]['id']
+            else:
+                logging.warning(f"Spreadsheet '{name}' not found.")
+                return None
+        except Exception as e:
+            logging.error(f"Error finding spreadsheet: {e}")
+            return None
+
+    def get_sheet_values(self, spreadsheet_id, range_name):
+        """Read values from a sheet range."""
+        if not self.sheets_service:
+            logging.warning("Sheets service not initialized.")
+            return None
+
+        try:
+            result = self.sheets_service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id, range=range_name).execute()
+            values = result.get('values', [])
+            logging.info(f"Read {len(values)} rows from '{range_name}'")
+            return values
+        except Exception as e:
+            logging.error(f"Error reading sheet values: {e}")
+            return None
+
+    def append_sheet_row(self, spreadsheet_id, range_name, values):
+        """Append a row to a sheet."""
+        if not self.sheets_service:
+            logging.warning("Sheets service not initialized.")
+            return False
+
+        try:
+            body = {'values': [values]}
+            result = self.sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range=range_name,
+                valueInputOption='USER_ENTERED',
+                insertDataOption='INSERT_ROWS',
+                body=body
+            ).execute()
+            logging.info(f"Appended 1 row to '{range_name}'. Updated {result.get('updates').get('updatedCells')} cells.")
+            return True
+        except Exception as e:
+            logging.error(f"Error appending to sheet: {e}")
+            return False
+
+    def batch_append_rows(self, spreadsheet_id, range_name, values_list):
+        """Append multiple rows to a sheet at once."""
+        if not self.sheets_service:
+            logging.warning("Sheets service not initialized.")
+            return False
+
+        try:
+            body = {'values': values_list}
+            result = self.sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range=range_name,
+                valueInputOption='USER_ENTERED',
+                insertDataOption='INSERT_ROWS',
+                body=body
+            ).execute()
+            logging.info(f"Appended {len(values_list)} rows to '{range_name}'.")
+            return True
+        except Exception as e:
+            logging.error(f"Error batch appending to sheet: {e}")
+            return False
+
+    def get_or_create_sheet(self, spreadsheet_id, sheet_name):
+        """Get sheet ID by name, create if doesn't exist. Returns sheet_id."""
+        if not self.sheets_service:
+            logging.warning("Sheets service not initialized.")
+            return None
+
+        try:
+            # Get spreadsheet metadata
+            spreadsheet = self.sheets_service.spreadsheets().get(
+                spreadsheetId=spreadsheet_id).execute()
+            sheets = spreadsheet.get('sheets', [])
+
+            # Check if sheet exists
+            for sheet in sheets:
+                if sheet['properties']['title'] == sheet_name:
+                    sheet_id = sheet['properties']['sheetId']
+                    logging.info(f"Sheet '{sheet_name}' already exists (ID: {sheet_id})")
+                    return sheet_id
+
+            # Sheet doesn't exist, create it
+            logging.info(f"Creating new sheet '{sheet_name}'...")
+            request_body = {
+                'requests': [{
+                    'addSheet': {
+                        'properties': {
+                            'title': sheet_name
+                        }
+                    }
+                }]
+            }
+            response = self.sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id, body=request_body).execute()
+            sheet_id = response['replies'][0]['addSheet']['properties']['sheetId']
+            logging.info(f"Created sheet '{sheet_name}' (ID: {sheet_id})")
+            return sheet_id
+
+        except Exception as e:
+            logging.error(f"Error getting/creating sheet: {e}")
+            return None
+
+    def read_holdings_from_sheet(self, spreadsheet_name="Portfolio", sheet_name="holdings"):
+        """Read holdings from Google Sheet, return as DataFrame."""
+        import pandas as pd
+        from datetime import datetime
+
+        if not self.sheets_service:
+            logging.warning("Sheets service not initialized.")
+            return pd.DataFrame()
+
+        try:
+            # Find spreadsheet by name
+            spreadsheet_id = self.find_spreadsheet_by_name(spreadsheet_name)
+            if not spreadsheet_id:
+                raise ValueError(f"Spreadsheet '{spreadsheet_name}' not found")
+
+            # Read holdings sheet
+            range_name = f"{sheet_name}!A:C"  # Symbol, Shares, PurchaseDate
+            values = self.get_sheet_values(spreadsheet_id, range_name)
+
+            if not values:
+                logging.warning(f"No data found in '{sheet_name}' sheet")
+                return pd.DataFrame()
+
+            # Convert to DataFrame
+            # First row should be headers: Symbol, Shares, PurchaseDate
+            headers = values[0]
+            data_rows = values[1:]
+
+            df = pd.DataFrame(data_rows, columns=headers)
+
+            # Normalize column names (user said: Symbol, Shares, PurchaseDate)
+            # Map to our internal format: Tickers, Quantity, PurchaseDate
+            column_mapping = {
+                'Symbol': 'Tickers',
+                'Shares': 'Quantity',
+                'PurchaseDate': 'PurchaseDate'
+            }
+
+            df = df.rename(columns=column_mapping)
+
+            # Convert data types
+            df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce')
+
+            # Parse PurchaseDate (format: mm/dd/yyyy)
+            def parse_date(date_str):
+                try:
+                    return datetime.strptime(date_str, '%m/%d/%Y')
+                except:
+                    logging.warning(f"Could not parse date: {date_str}")
+                    return None
+
+            df['PurchaseDateObj'] = df['PurchaseDate'].apply(parse_date)
+
+            # Remove rows with invalid data
+            df = df.dropna(subset=['Tickers', 'Quantity', 'PurchaseDateObj'])
+
+            logging.info(f"Loaded {len(df)} holdings from Google Sheets '{spreadsheet_name}/{sheet_name}'")
+            return df
+
+        except Exception as e:
+            logging.error(f"Error reading holdings from sheet: {e}")
+            return pd.DataFrame()
