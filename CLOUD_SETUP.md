@@ -30,15 +30,19 @@ Since you are using a personal account, we will use OAuth 2.0 to access your Goo
 ### Step 2: Generate Refresh Token
 You need a one-time Refresh Token to allow the GitHub Action to access your Drive offline.
 
-1.  Ensure you have the necessary libraries installed locally:
+1.  **Install dependencies** with Poetry:
     ```bash
-    pip install google-auth-oauthlib
+    poetry install
     ```
-2.  Run the provided script `get_refresh_token.py` to generate your refresh token.
-    *   Make sure you have placed your `credentials.json` file in the project root (downloaded from Google Cloud Console).
-3.  Run the script: `python get_refresh_token.py`.
-4.  A browser window will open. Log in with your Google account and allow access.
-5.  Copy the **Refresh Token** printed in the terminal.
+2.  Run the provided script `get_refresh_token.py` to generate your refresh token:
+    *   Make sure you have placed your `credentials.json` file in the project root (downloaded from Google Cloud Console in Step 1).
+    
+    ```bash
+    poetry run python get_refresh_token.py
+    ```
+3.  A browser window will open. Log in with your Google account and **allow access**.
+4.  Copy the **Refresh Token**, **Client ID**, and **Client Secret** printed in the terminal.
+    *   You will use these to configure GitHub Secrets in Step 4.
 
 ### Step 3: Create Folder
 1.  Create a folder in your Google Drive (e.g., "Portfolio Data").
@@ -76,13 +80,33 @@ Add the following secrets:
 -   **Name**: `EMAIL_TO` (Optional)
     -   **Value**: The email address to receive reports (defaults to `EMAIL_USER`).
 
-## 3. Testing
-1.  Push these changes to GitHub.
-2.  Go to the **Actions** tab.
-3.  Select "Daily Portfolio Update".
-4.  Click **Run workflow** to test manually.
+## 3. Update GitHub Default Branch (Important!)
 
-## 4. Local Execution (Optional)
+If you renamed your local branch from `master` to `main`, you must also update GitHub's default branch:
+
+1.  Go to your GitHub repository: **Settings** → **Branches**
+2.  Under "Default branch", click the switch icon next to `master`
+3.  Select `main` as the new default branch
+4.  Click **Update**
+5.  Go to **Branches** (under Code tab) and delete the old `master` branch
+
+This ensures the GitHub Action runs on the correct branch.
+
+## 4. Testing
+
+**Important:** The GitHub Action uses **OAuth 2.0** with the Refresh Token you generated. This means:
+- The workflow does **NOT** require interactive login
+- It uses the `GOOGLE_REFRESH_TOKEN`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` secrets
+- The refresh token is valid long-term and will automatically refresh the access token
+
+**To Test:**
+1.  Ensure all secrets from Steps 1-2 are configured in GitHub
+2.  Go to the **Actions** tab in your repository
+3.  Select **"Daily Portfolio Update"**
+4.  Click **Run workflow** → **Run workflow** (green button)
+5.  Watch the workflow execute and check for any errors
+
+## 5. Local Execution (Optional)
 
 If you want to run the script locally on your machine:
 
