@@ -2,7 +2,7 @@ import os
 import io
 import json
 import logging
-from google.oauth2 import service_account
+
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -68,14 +68,7 @@ class DriveClient:
                 except Exception as e:
                     logging.error(f"Interactive login failed: {e}")
 
-            # 5. Fallback to Service Account
-            if not self.creds or not self.creds.valid:
-                creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-                if creds_json:
-                    creds_dict = json.loads(creds_json)
-                    self.creds = service_account.Credentials.from_service_account_info(
-                        creds_dict, scopes=SCOPES)
-                    logging.info("Authenticated with Google Drive API (Service Account).")
+
 
             if self.creds and self.creds.valid:
                 self.service = build('drive', 'v3', credentials=self.creds)
