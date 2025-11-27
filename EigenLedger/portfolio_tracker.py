@@ -135,9 +135,33 @@ def get_portfolio_metrics(portfolio_df):
     return pd.DataFrame(results)
 
 if __name__ == "__main__":
+    # Cloud Integration Imports
+    from EigenLedger.drive_client import DriveClient
+    from EigenLedger.email_client import EmailClient
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     dad_tickers_path = os.path.join(base_dir, "dad_tickers.txt")
     
+    # Check for Cloud Mode
+    ENABLE_CLOUD = os.environ.get("ENABLE_CLOUD", "false").lower() == "true"
+    drive_client = None
+    email_client = None
+
+    if ENABLE_CLOUD:
+        logging.info("Cloud mode enabled. Initializing clients...")
+        drive_client = DriveClient()
+        email_client = EmailClient()
+        
+        # Download tickers from Drive
+        FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID")
+        if drive_client.download_file("dad_tickers.txt", dad_tickers_path, folder_id=FOLDER_ID):
+            logging.info("Downloaded dad_tickers.txt from Drive.")
+        else:
+            logging.warning("Could not download dad_tickers.txt from Drive. Using local copy if available.")
+
     print(f"Loading portfolio from {dad_tickers_path}...")
     df = load_portfolio(dad_tickers_path)
     
@@ -147,7 +171,8 @@ if __name__ == "__main__":
         print("\n--- Portfolio Dashboard ---")
         # Reorder columns for readability
         cols = ["Ticker", "Qty", "Purch Date", "Purch Price", "Curr Price", "Cost Basis", "Mkt Value", "P&L %", "Div Income", "Total Ret (%)", "Yield on Cost", "CAGR", "Beta"]
-        print(metrics[cols].to_string(index=False))
+        dashboard_str = metrics[cols].to_string(index=False)
+        print(dashboard_str)
         
         print("\n--- Summary ---")
         total_invested = metrics["Cost Basis"].sum()
@@ -156,8 +181,28 @@ if __name__ == "__main__":
         total_pl = total_value - total_invested
         total_ret = total_pl + total_divs
         
-        print(f"Total Invested:   ${total_invested:,.2f}")
-        print(f"Current Value:    ${total_value:,.2f}")
-        print(f"Unrealized P&L:   ${total_pl:,.2f} ({(total_pl/total_invested)*100:.2f}%)")
-        print(f"Dividend Income:  ${total_divs:,.2f}")
-        print(f"Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)")
+        summary_str = f"""
+Total Invested:   ${total_invested:,.2f}
+Current Value:    ${total_value:,.2f}
+Unrealized P&L:   ${total_pl:,.2f} ({(total_pl/total_invested)*100:.2f}%)
+Dividend Income:  ${total_divs:,.2f}
+Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
+"""
+        print(summary_str)
+        
+        # Cloud Actions: Upload and Email
+        if ENABLE_CLOUD:
+            # Save report to CSV
+            report_path = os.path.join(base_dir, "portfolio_report.csv")
+            metrics.to_csv(report_path, index=False)
+            
+            # Upload to Drive
+            if drive_client:
+                drive_client.upload_file(report_path, folder_id=FOLDER_ID)
+                
+            # Send Email
+            if email_client:
+                email_body = f"Daily Portfolio Update:\n\n{summary_str}\n\nDashboard:\n{dashboard_str}"
+                to_email = os.environ.get("EMAIL_TO", email_client.username) # Default to self if not specified
+                email_client.send_email("Daily Portfolio Report", email_body, to_email, attachments=[report_path])
+

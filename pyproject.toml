@@ -16,6 +16,9 @@ yfinance = "^0.2.0"
 ipython = "^7.16.0"
 fpdf = "^1.7.2"
 pyportfolioopt = "^1.4.0"
+google-api-python-client = "^2.0.0"
+google-auth-httplib2 = "^0.1.0"
+google-auth-oauthlib = "^1.0.0"
 
 [[tool.poetry.packages]]
 include = "EigenLedger"
