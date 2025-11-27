@@ -2,6 +2,7 @@ import pandas as pd
 import yfinance as yf
 import os
 from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
 
 def excel_date_to_datetime(serial):
     # Excel base date is usually Dec 30, 1899
@@ -134,6 +135,125 @@ def get_portfolio_metrics(portfolio_df):
         
     return pd.DataFrame(results)
 
+class BacktestEngine:
+    """Simple backtest engine for buy-and-hold portfolio analysis."""
+    
+    def __init__(self, portfolio_df):
+        self.portfolio_df = portfolio_df
+        self.historical_data = None
+        self.portfolio_value_history = None
+        self.benchmark_value_history = None
+
+    def _fetch_historical_data(self):
+        tickers = self.portfolio_df['Tickers'].unique().tolist()
+        # Add SPY as benchmark
+        if "SPY" not in tickers:
+            tickers_with_benchmark = tickers + ["SPY"]
+        else:
+            tickers_with_benchmark = tickers
+            
+        min_date = self.portfolio_df['PurchaseDateObj'].min()
+        start_date = (min_date - timedelta(days=5)).strftime('%Y-%m-%d')
+        
+        print(f"\nFetching historical data for backtest...")
+        data = yf.download(tickers_with_benchmark, start=start_date, progress=False, actions=True, auto_adjust=False)
+        self.historical_data = data
+
+    def run_backtest(self):
+        if self.historical_data is None:
+            self._fetch_historical_data()
+
+        if self.historical_data.empty:
+            print("No historical data available for backtesting.")
+            return
+
+        adj_close = self.historical_data["Adj Close"]
+        dividends = self.historical_data["Dividends"] if "Dividends" in self.historical_data.columns else pd.DataFrame(0, index=adj_close.index, columns=adj_close.columns)
+        
+        # Initialize portfolio value series
+        portfolio_value = pd.Series(0.0, index=adj_close.index)
+        
+        # Track initial investment for comparison
+        total_initial_investment = 0
+        
+        for index, row in self.portfolio_df.iterrows():
+            ticker = row['Tickers']
+            qty = row['Quantity']
+            purchase_date = row['PurchaseDateObj']
+            
+            if ticker not in adj_close.columns:
+                print(f"Warning: Ticker {ticker} not found in historical data. Skipping.")
+                continue
+
+            # Find the actual purchase date in the historical data
+            try:
+                idx = adj_close.index.get_indexer([purchase_date], method='nearest')[0]
+                actual_purchase_date = adj_close.index[idx]
+                purchase_price = adj_close[ticker].iloc[idx]
+                total_initial_investment += purchase_price * qty
+            except Exception:
+                print(f"Could not find purchase date for {ticker} on {purchase_date}. Skipping.")
+                continue
+
+            # Calculate the value of this position over time (from purchase date onward)
+            position_value = adj_close[ticker].loc[actual_purchase_date:].copy() * qty
+            
+            # Add cumulative dividends received
+            if ticker in dividends.columns:
+                ticker_divs = dividends[ticker].loc[actual_purchase_date:]
+                cumulative_divs = ticker_divs.cumsum() * qty
+                position_value = position_value + cumulative_divs.reindex(position_value.index, fill_value=0)
+            
+            # Add to total portfolio value
+            portfolio_value = portfolio_value.add(position_value, fill_value=0)
+        
+        # Only keep dates after first purchase
+        self.portfolio_value_history = portfolio_value[portfolio_value > 0]
+        
+        # Calculate benchmark (SPY) performance for comparison
+        if "SPY" in adj_close.columns:
+            spy_start_date = self.portfolio_df['PurchaseDateObj'].min()
+            spy_idx = adj_close.index.get_indexer([spy_start_date], method='nearest')[0]
+            spy_start_price = adj_close["SPY"].iloc[spy_idx]
+            
+            # Normalize SPY to same initial investment
+            spy_shares = total_initial_investment / spy_start_price
+            self.benchmark_value_history = (adj_close["SPY"].loc[adj_close.index[spy_idx]:] * spy_shares).dropna()
+        
+        print("✅ Backtest completed.")
+
+    def plot_results(self, filename="portfolio_backtest.png"):
+        if self.portfolio_value_history is None or self.portfolio_value_history.empty:
+            print("No backtest results to plot. Run backtest first.")
+            return
+
+        plt.figure(figsize=(14, 7))
+        
+        # Plot portfolio
+        plt.plot(self.portfolio_value_history.index, self.portfolio_value_history.values, 
+                 label='Your Portfolio', linewidth=2, color='#2E86C1')
+        
+        # Plot benchmark if available
+        if self.benchmark_value_history is not None and not self.benchmark_value_history.empty:
+            plt.plot(self.benchmark_value_history.index, self.benchmark_value_history.values, 
+                     label='SPY Benchmark', linewidth=2, color='#E74C3C', linestyle='--')
+        
+        plt.title('Portfolio Historical Performance (Buy & Hold)', fontsize=16, fontweight='bold')
+        plt.xlabel('Date', fontsize=12)
+        plt.ylabel('Portfolio Value ($)', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.legend(fontsize=12)
+        plt.tight_layout()
+        
+        try:
+            plt.savefig(filename, dpi=150)
+            print(f"📊 Backtest chart saved to: {filename}")
+        except Exception as e:
+            print(f"Error saving plot: {e}")
+        
+        plt.show()
+
+
 if __name__ == "__main__":
     # Cloud Integration Imports
     from EigenLedger.drive_client import DriveClient
@@ -168,13 +288,17 @@ if __name__ == "__main__":
     if not df.empty:
         metrics = get_portfolio_metrics(df)
         
-        print("\n--- Portfolio Dashboard ---")
+        print("\n" + "="*80)
+        print("📊 PORTFOLIO DASHBOARD")
+        print("="*80)
         # Reorder columns for readability
         cols = ["Ticker", "Qty", "Purch Date", "Purch Price", "Curr Price", "Cost Basis", "Mkt Value", "P&L %", "Div Income", "Total Ret (%)", "Yield on Cost", "CAGR", "Beta"]
         dashboard_str = metrics[cols].to_string(index=False)
         print(dashboard_str)
         
-        print("\n--- Summary ---")
+        print("\n" + "="*80)
+        print("📈 PORTFOLIO SUMMARY")
+        print("="*80)
         total_invested = metrics["Cost Basis"].sum()
         total_value = metrics["Mkt Value"].sum()
         total_divs = metrics["Div Income"].sum()
@@ -190,6 +314,17 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
 """
         print(summary_str)
         
+        # Backtest Analysis
+        print("="*80)
+        print("⏳ RUNNING BACKTEST ANALYSIS")
+        print("="*80)
+        
+        engine = BacktestEngine(df)
+        engine.run_backtest()
+        
+        backtest_plot_path = os.path.join(base_dir, "portfolio_backtest.png")
+        engine.plot_results(backtest_plot_path)
+
         # Cloud Actions: Upload and Email
         if ENABLE_CLOUD:
             # Save report to CSV
@@ -199,10 +334,18 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
             # Upload to Drive
             if drive_client:
                 drive_client.upload_file(report_path, folder_id=FOLDER_ID)
+                if os.path.exists(backtest_plot_path):
+                    drive_client.upload_file(backtest_plot_path, folder_id=FOLDER_ID)
                 
             # Send Email
             if email_client:
                 email_body = f"Daily Portfolio Update:\n\n{summary_str}\n\nDashboard:\n{dashboard_str}"
-                to_email = os.environ.get("EMAIL_TO", email_client.username) # Default to self if not specified
-                email_client.send_email("Daily Portfolio Report", email_body, to_email, attachments=[report_path])
-
+                to_email = os.environ.get("EMAIL_TO", email_client.username)
+                attachments = [report_path]
+                if os.path.exists(backtest_plot_path):
+                    attachments.append(backtest_plot_path)
+                email_client.send_email("Daily Portfolio Report", email_body, to_email, attachments=attachments)
+                
+    print("\n" + "="*80)
+    print("✅ Portfolio analysis complete!")
+    print("="*80)
