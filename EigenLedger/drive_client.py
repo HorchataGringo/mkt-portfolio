@@ -57,7 +57,13 @@ class DriveClient:
                         client_secret=client_secret,
                         scopes=SCOPES
                     )
-                    logging.info("Authenticated with Google Drive API (Env Vars).")
+                    # Refresh the token immediately to make credentials valid
+                    try:
+                        self.creds.refresh(Request())
+                        logging.info("Authenticated with Google Drive API (Env Vars) and refreshed token.")
+                    except Exception as e:
+                        logging.error(f"Failed to refresh token from env vars: {e}")
+                        self.creds = None
 
             # 4. If still no creds, try Interactive Local Flow (credentials.json)
             if (not self.creds or not self.creds.valid) and os.path.exists('credentials.json'):
