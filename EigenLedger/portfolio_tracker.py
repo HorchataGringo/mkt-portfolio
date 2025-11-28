@@ -503,6 +503,10 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
             logging.info("Saving current snapshot...")
             tracker.save_snapshot(current_snapshot)
 
+            # Save position history (individual stock values)
+            logging.info("Saving position history...")
+            tracker.save_position_history(current_snapshot)
+
             # Save daily changes
             if daily_changes:
                 tracker.save_daily_changes(daily_changes)

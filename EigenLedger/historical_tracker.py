@@ -32,13 +32,15 @@ class HistoricalTracker:
             if not self.spreadsheet_id:
                 raise ValueError(f"Spreadsheet '{self.spreadsheet_name}' not found. Please create it first.")
 
-            # Ensure 'snapshots' and 'daily_changes' sheets exist
+            # Ensure 'snapshots', 'daily_changes', and 'position_history' sheets exist
             self.drive_client.get_or_create_sheet(self.spreadsheet_id, 'snapshots')
             self.drive_client.get_or_create_sheet(self.spreadsheet_id, 'daily_changes')
+            self.drive_client.get_or_create_sheet(self.spreadsheet_id, 'position_history')
 
             # Initialize headers if sheets are empty
             self._init_snapshots_headers()
             self._init_daily_changes_headers()
+            self._init_position_history_headers()
 
             logging.info(f"Historical tracker initialized for spreadsheet '{self.spreadsheet_name}'")
 
@@ -76,6 +78,22 @@ class HistoricalTracker:
                 logging.info("Initialized daily_changes sheet with headers")
         except Exception as e:
             logging.error(f"Error initializing daily_changes headers: {e}")
+
+    def _init_position_history_headers(self):
+        """Initialize headers for position_history sheet if empty."""
+        try:
+            values = self.drive_client.get_sheet_values(self.spreadsheet_id, 'position_history!A1:M1')
+            if not values:
+                # Sheet is empty, add headers
+                headers = [
+                    'date', 'ticker', 'qty', 'purchase_date', 'purchase_price', 'current_price',
+                    'cost_basis', 'market_value', 'unrealized_pl', 'pl_pct', 'dividend_income',
+                    'total_return', 'total_return_pct'
+                ]
+                self.drive_client.append_sheet_row(self.spreadsheet_id, 'position_history!A1', headers)
+                logging.info("Initialized position_history sheet with headers")
+        except Exception as e:
+            logging.error(f"Error initializing position_history headers: {e}")
 
     def create_snapshot(self, portfolio_df, metrics_df):
         """
@@ -374,6 +392,58 @@ class HistoricalTracker:
 
         except Exception as e:
             logging.error(f"Error saving daily changes: {e}")
+            return False
+
+    def save_position_history(self, snapshot):
+        """
+        Save individual position data to 'position_history' sheet.
+        One row per position per day.
+
+        Args:
+            snapshot: Snapshot dict with positions array
+
+        Returns:
+            bool: Success status
+        """
+        try:
+            date = snapshot['date']
+            positions = snapshot['positions']
+
+            if not positions:
+                logging.warning(f"No positions to save for {date}")
+                return True
+
+            rows_to_append = []
+            for position in positions:
+                row = [
+                    date,
+                    position['ticker'],
+                    position['qty'],
+                    position['purchase_date'],
+                    position['purchase_price'],
+                    position['current_price'],
+                    position['cost_basis'],
+                    position['market_value'],
+                    position['unrealized_pl'],
+                    position['pl_pct'],
+                    position['dividend_income'],
+                    position['total_return'],
+                    position['total_return_pct']
+                ]
+                rows_to_append.append(row)
+
+            # Batch append all positions for this date
+            for row in rows_to_append:
+                success = self.drive_client.append_sheet_row(self.spreadsheet_id, 'position_history!A:M', row)
+                if not success:
+                    logging.error(f"Failed to append position {row[1]} for {date}")
+                    return False
+
+            logging.info(f"Saved {len(rows_to_append)} positions to position_history for {date}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Error saving position history: {e}")
             return False
 
     def generate_trend_chart(self, filename="portfolio_trends.png", days=90):

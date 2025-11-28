@@ -174,6 +174,72 @@ AMZY    | 100    | 03/10/2024
 
 ---
 
+## Sheet 4: position_history
+
+**Purpose**: Daily values for each individual position (append-only, auto-generated)
+
+**Status**: Managed by tracker - DO NOT manually edit
+
+### Schema
+
+| Column | Type | Description | Example |
+|--------|------|-------------|---------|
+| date | DATE | Date of snapshot | 2025-01-15 |
+| ticker | TEXT | Stock ticker symbol | NVDY |
+| qty | NUMBER | Number of shares | 100 |
+| purchase_date | DATE | Original purchase date | 2024-01-15 |
+| purchase_price | NUMBER | Price paid per share | 25.50 |
+| current_price | NUMBER | Current price per share | 32.75 |
+| cost_basis | NUMBER | Total cost (qty × purchase price) | 2550.00 |
+| market_value | NUMBER | Current value (qty × current price) | 3275.00 |
+| unrealized_pl | NUMBER | Unrealized P&L ($ amount) | 725.00 |
+| pl_pct | NUMBER | Unrealized P&L percentage | 28.43 |
+| dividend_income | NUMBER | Total dividends received | 150.00 |
+| total_return | NUMBER | Total return (P&L + dividends) | 875.00 |
+| total_return_pct | NUMBER | Total return percentage | 34.31 |
+
+### Example Data
+
+```
+date        | ticker | qty | purchase_date | purchase_price | current_price | cost_basis | market_value | unrealized_pl | pl_pct | dividend_income | total_return | total_return_pct
+------------|--------|-----|---------------|----------------|---------------|------------|--------------|---------------|--------|-----------------|--------------|------------------
+2025-01-15  | NVDY   | 100 | 2024-01-15    | 25.50          | 32.75         | 2550.00    | 3275.00      | 725.00        | 28.43  | 150.00          | 875.00       | 34.31
+2025-01-15  | MSTY   | 100 | 2024-02-20    | 18.25          | 22.10         | 1825.00    | 2210.00      | 385.00        | 21.10  | 85.00           | 470.00       | 25.75
+2025-01-16  | NVDY   | 100 | 2024-01-15    | 25.50          | 33.10         | 2550.00    | 3310.00      | 760.00        | 29.80  | 150.00          | 910.00       | 35.69
+2025-01-16  | MSTY   | 100 | 2024-02-20    | 18.25          | 21.85         | 1825.00    | 2185.00      | 360.00        | 19.73  | 85.00           | 445.00       | 24.38
+```
+
+### Notes
+
+- One row per position per day (if you have 20 positions, you get 20 rows per day)
+- Allows you to track individual stock performance over time
+- Can chart any single stock's value progression
+- Can filter by ticker to see one stock's history
+- Can compare multiple stocks side-by-side
+
+### Use Cases
+
+**Track a specific stock over time:**
+```
+Filter: ticker = "NVDY"
+Result: See daily values for NVDY only
+```
+
+**Compare two stocks:**
+```
+Filter: ticker IN ("NVDY", "MSTY")
+Chart: market_value over time, grouped by ticker
+```
+
+**Find best/worst performers:**
+```
+Filter: date = "2025-01-15"
+Sort by: pl_pct DESC
+Result: See which stocks performed best on that day
+```
+
+---
+
 ## Data Flow
 
 ```
@@ -192,6 +258,8 @@ User Updates → holdings sheet
     Calculates daily changes
                   ↓
     Appends new snapshot to snapshots sheet
+                  ↓
+    Appends position data to position_history sheet
                   ↓
     Appends daily changes to daily_changes sheet
                   ↓
