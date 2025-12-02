@@ -1,7 +1,11 @@
 import pandas as pd
 import yfinance as yf
 import os
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for headless environments
 import matplotlib.pyplot as plt
 
 def excel_date_to_datetime(serial):
@@ -10,14 +14,52 @@ def excel_date_to_datetime(serial):
     delta = timedelta(days=serial)
     return base + delta
 
-def load_portfolio(filepath):
+def load_portfolio(filepath, drive_client=None, use_sheets=None):
+    """
+    Load portfolio from Google Sheets or CSV file.
+
+    Priority controlled by USE_SHEETS environment variable:
+    - If USE_SHEETS=true and drive_client provided: Read from Sheets
+    - Otherwise: Read from CSV file (filepath)
+
+    Args:
+        filepath: Path to CSV file (fallback or local testing)
+        drive_client: DriveClient instance (optional)
+        use_sheets: Override env variable (for testing)
+
+    Returns:
+        DataFrame with columns: Tickers, Quantity, PurchaseDateObj
+    """
+    import logging
+
+    # Determine source based on env variable
+    if use_sheets is None:
+        use_sheets = os.environ.get("USE_SHEETS", "false").lower() == "true"
+
     try:
+        # Try Sheets first if enabled and drive_client available
+        if use_sheets and drive_client and hasattr(drive_client, 'sheets_service') and drive_client.sheets_service:
+            try:
+                logging.info("Attempting to load portfolio from Google Sheets...")
+                df = drive_client.read_holdings_from_sheet()
+                if not df.empty:
+                    logging.info(f"Successfully loaded {len(df)} positions from Google Sheets")
+                    return df
+                else:
+                    logging.warning("Sheets returned empty DataFrame. Falling back to CSV.")
+            except Exception as e:
+                logging.warning(f"Could not read from Sheets: {e}. Falling back to CSV.")
+
+        # Fallback to CSV
+        logging.info(f"Loading portfolio from CSV file: {filepath}")
         df = pd.read_csv(filepath)
         # Convert Excel serial date to datetime
         df['PurchaseDateObj'] = df['PurchaseDate'].apply(excel_date_to_datetime)
+        logging.info(f"Loaded {len(df)} positions from CSV")
         return df
+
     except Exception as e:
-        print(f"Error loading portfolio: {e}")
+        logging.error(f"Error loading portfolio: {e}")
         return pd.DataFrame()
 
 def get_column_definitions():
@@ -281,8 +323,88 @@ class BacktestEngine:
         
         plt.show()
 
+def format_movers(movers_list):
+    """Format top gainers/losers for email display."""
+    if not movers_list:
+        return "  No data"
 
-if __name__ == "__main__":
+    lines = []
+    for i, mover in enumerate(movers_list, 1):
+        ticker = mover['ticker']
+        pct = mover['price_change_pct']
+        is_new = mover.get('is_new', False)
+        is_sold = mover.get('is_sold', False)
+
+        if is_new:
+            lines.append(f"  {i}. {ticker}: NEW POSITION")
+        elif is_sold:
+            lines.append(f"  {i}. {ticker}: SOLD")
+        else:
+            lines.append(f"  {i}. {ticker}: {pct:+.2f}%")
+
+    return "\n".join(lines)
+
+
+def format_email_with_changes(summary_str, dashboard_str, daily_changes):
+    """Format email body with daily changes and summary."""
+    from datetime import datetime
+
+    # Header
+    email_body = f"Daily Portfolio Update - {datetime.now().strftime('%A, %B %d, %Y')}\n"
+    email_body += "=" * 80 + "\n\n"
+
+    # Daily changes section (if available)
+    if daily_changes and not daily_changes.get('is_first_run'):
+        email_body += f"📊 DAILY CHANGES (vs {daily_changes['prev_date']})\n"
+        email_body += "=" * 80 + "\n"
+        email_body += f"Portfolio Value Change: ${daily_changes['value_change']:,.2f} ({daily_changes['value_change_pct']:+.2f}%)\n"
+        email_body += f"P&L Change:            ${daily_changes['pl_change']:,.2f}\n"
+        email_body += f"New Dividends:         ${daily_changes['div_change']:,.2f}\n"
+        email_body += f"Total Return Change:   ${daily_changes['return_change']:,.2f}\n\n"
+
+        email_body += "🔥 Top Gainers:\n"
+        email_body += format_movers(daily_changes['top_gainers']) + "\n\n"
+
+        email_body += "📉 Top Losers:\n"
+        email_body += format_movers(daily_changes['top_losers']) + "\n\n"
+
+    elif daily_changes and daily_changes.get('is_first_run'):
+        email_body += "📊 HISTORICAL TRACKING STARTED\n"
+        email_body += "=" * 80 + "\n"
+        email_body += "This is the first snapshot. Daily changes will appear in tomorrow's report!\n\n"
+
+    # Weekly summary on Mondays
+    day_of_week = datetime.now().strftime('%A')
+    if day_of_week == 'Monday':
+        email_body += "📅 WEEKLY SUMMARY\n"
+        email_body += "=" * 80 + "\n"
+        email_body += "Check the attached trend chart for 90-day performance history.\n"
+        email_body += "Review your position allocations and rebalance if needed.\n\n"
+
+    # Portfolio summary
+    email_body += "📈 PORTFOLIO SUMMARY\n"
+    email_body += "=" * 80 + "\n"
+    email_body += summary_str + "\n"
+
+    # Dashboard
+    email_body += "📊 PORTFOLIO DASHBOARD\n"
+    email_body += "=" * 80 + "\n"
+    email_body += dashboard_str + "\n\n"
+
+    # Footer
+    email_body += "=" * 80 + "\n"
+    email_body += "Attachments:\n"
+    email_body += "  - portfolio_report.csv (detailed metrics)\n"
+    email_body += "  - portfolio_report.xlsx (Excel report)\n"
+    email_body += "  - portfolio_backtest.png (performance vs SPY)\n"
+    email_body += "  - portfolio_trends.png (90-day trend chart)\n\n"
+    email_body += "Generated by EigenLedger Portfolio Tracker\n"
+
+    return email_body
+
+
+def main():
+    """Main entry point for portfolio tracker."""
     # Cloud Integration Imports
     from EigenLedger.drive_client import DriveClient
     from EigenLedger.email_client import EmailClient
@@ -290,9 +412,10 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dad_tickers_path = os.path.join(base_dir, "dad_tickers.txt")
-    
+    # Use pathlib for better path handling
+    base_dir = Path(__file__).parent.parent
+    dad_tickers_path = base_dir / "dad_tickers.txt"
+
     # Check for Cloud Mode
     ENABLE_CLOUD = os.environ.get("ENABLE_CLOUD", "false").lower() == "true"
     drive_client = None
@@ -302,90 +425,185 @@ if __name__ == "__main__":
         logging.info("Cloud mode enabled. Initializing clients...")
         drive_client = DriveClient()
         email_client = EmailClient()
-        
-        # Download tickers from Drive
-        FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID")
-        if drive_client.download_file("dad_tickers.txt", dad_tickers_path, folder_id=FOLDER_ID):
-            logging.info("Downloaded dad_tickers.txt from Drive.")
-        else:
-            logging.warning("Could not download dad_tickers.txt from Drive. Using local copy if available.")
 
-    print(f"Loading portfolio from {dad_tickers_path}...")
-    df = load_portfolio(dad_tickers_path)
-    
-    if not df.empty:
-        metrics = get_portfolio_metrics(df)
-        
-        print("\n" + "="*80)
-        print("📊 PORTFOLIO DASHBOARD")
-        print("="*80)
-        # Reorder columns for readability
-        cols = ["Ticker", "Qty", "Purch Date", "Purch Price", "Cost Basis", "Curr Price", "Mkt Value", "Unrealized P&L", "P&L %", "Div Income (4 weeks)", "Div Income to date", "Total Ret ($)", "Total Ret (%)", "Yield on Cost", "CAGR", "Beta"]
-        dashboard_str = metrics[cols].to_string(index=False)
-        print(dashboard_str)
-        
-        print("\n" + "="*80)
-        print("📈 PORTFOLIO SUMMARY")
-        print("="*80)
-        total_invested = metrics["Cost Basis"].sum()
-        total_value = metrics["Mkt Value"].sum()
-        total_divs = metrics["Div Income to date"].sum()
-        total_pl = total_value - total_invested
-        total_ret = total_pl + total_divs
-        
-        summary_str = f"""
+        # Download tickers from Drive only if not using Sheets
+        USE_SHEETS = os.environ.get("USE_SHEETS", "false").lower() == "true"
+        FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID")
+
+        if not USE_SHEETS:
+            # Only download CSV file if we're not reading from Sheets
+            if drive_client.download_file("dad_tickers.txt", str(dad_tickers_path), folder_id=FOLDER_ID):
+                logging.info("Downloaded dad_tickers.txt from Drive.")
+            else:
+                logging.warning("Could not download dad_tickers.txt from Drive. Using local copy if available.")
+        else:
+            logging.info("USE_SHEETS=true - Will read portfolio from Google Sheets instead of CSV")
+
+    # Load portfolio (from Sheets if USE_SHEETS=true, otherwise CSV)
+    print(f"Loading portfolio...")
+    df = load_portfolio(str(dad_tickers_path), drive_client=drive_client)
+
+    if df.empty:
+        logging.error("Portfolio data is empty or invalid. Exiting.")
+        sys.exit(1)
+
+    metrics = get_portfolio_metrics(df)
+
+    print("\n" + "="*80)
+    print("📊 PORTFOLIO DASHBOARD")
+    print("="*80)
+    # Reorder columns for readability
+    cols = ["Ticker", "Qty", "Purch Date", "Purch Price", "Cost Basis", "Curr Price", "Mkt Value", "Unrealized P&L", "P&L %", "Div Income (4 weeks)", "Div Income to date", "Total Ret ($)", "Total Ret (%)", "Yield on Cost", "CAGR", "Beta"]
+    dashboard_str = metrics[cols].to_string(index=False)
+    print(dashboard_str)
+
+    print("\n" + "="*80)
+    print("📈 PORTFOLIO SUMMARY")
+    print("="*80)
+    total_invested = metrics["Cost Basis"].sum()
+    total_value = metrics["Mkt Value"].sum()
+    total_divs = metrics["Div Income to date"].sum()
+    total_pl = total_value - total_invested
+    total_ret = total_pl + total_divs
+
+    summary_str = f"""
 Total Invested:   ${total_invested:,.2f}
 Current Value:    ${total_value:,.2f}
 Unrealized P&L:   ${total_pl:,.2f} ({(total_pl/total_invested)*100:.2f}%)
 Dividend Income:  ${total_divs:,.2f}
 Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
 """
-        print(summary_str)
-        
-        # Backtest Analysis
-        print("="*80)
-        print("⏳ RUNNING BACKTEST ANALYSIS")
-        print("="*80)
-        
-        engine = BacktestEngine(df)
-        engine.run_backtest()
-        
-        backtest_plot_path = os.path.join(base_dir, "portfolio_backtest.png")
-        engine.plot_results(backtest_plot_path)
+    print(summary_str)
 
-        # Save report to CSV (Local)
-        report_csv_path = os.path.join(base_dir, "portfolio_report.csv")
-        metrics.to_csv(report_csv_path, index=False)
-        print(f"Saved CSV report to {report_csv_path}")
-        
-        # Save report to Excel (Cloud/Local)
-        report_xlsx_path = os.path.join(base_dir, "portfolio_report.xlsx")
+    # Backtest Analysis
+    print("="*80)
+    print("⏳ RUNNING BACKTEST ANALYSIS")
+    print("="*80)
+
+    engine = BacktestEngine(df)
+    engine.run_backtest()
+
+    backtest_plot_path = base_dir / "portfolio_backtest.png"
+    engine.plot_results(str(backtest_plot_path))
+
+    # Historical Tracking (Sheets Integration)
+    daily_changes = None
+    trend_chart_path = base_dir / "portfolio_trends.png"
+
+    # Debug logging for Sheets integration
+    logging.info(f"ENABLE_CLOUD: {ENABLE_CLOUD}")
+    logging.info(f"drive_client exists: {drive_client is not None}")
+    if drive_client:
+        logging.info(f"drive_client.sheets_service exists: {hasattr(drive_client, 'sheets_service')}")
+        logging.info(f"drive_client.sheets_service value: {drive_client.sheets_service is not None if hasattr(drive_client, 'sheets_service') else 'N/A'}")
+
+    if ENABLE_CLOUD and drive_client and hasattr(drive_client, 'sheets_service') and drive_client.sheets_service:
+        print("\n" + "="*80)
+        print("📈 HISTORICAL TRACKING")
+        print("="*80)
+
         try:
-            with pd.ExcelWriter(report_xlsx_path, engine='openpyxl') as writer:
-                metrics.to_excel(writer, sheet_name='Portfolio Metrics', index=False)
-                get_column_definitions().to_excel(writer, sheet_name='Definitions', index=False)
-            print(f"Saved Excel report to {report_xlsx_path}")
-        except Exception as e:
-            print(f"Error saving Excel report: {e}")
+            from EigenLedger.historical_tracker import HistoricalTracker
 
-        # Cloud Actions: Upload and Email
-        if ENABLE_CLOUD:
-            # Upload to Drive
-            if drive_client:
-                # Upload Excel file instead of CSV
-                drive_client.upload_file(report_xlsx_path, folder_id=FOLDER_ID)
-                if os.path.exists(backtest_plot_path):
-                    drive_client.upload_file(backtest_plot_path, folder_id=FOLDER_ID)
-                
-            # Send Email
-            if email_client:
-                email_body = f"Daily Portfolio Update:\n\n{summary_str}\n\nDashboard:\n{dashboard_str}"
-                to_email = os.environ.get("EMAIL_TO", email_client.username)
-                attachments = [report_xlsx_path] # Attach Excel
-                if os.path.exists(backtest_plot_path):
-                    attachments.append(backtest_plot_path)
-                email_client.send_email("Daily Portfolio Report", email_body, to_email, attachments=attachments)
-                
+            # Initialize tracker
+            logging.info("Initializing HistoricalTracker...")
+            tracker = HistoricalTracker(drive_client)
+
+            # Create current snapshot
+            logging.info("Creating current snapshot...")
+            current_snapshot = tracker.create_snapshot(df, metrics)
+
+            # Get previous snapshot
+            logging.info("Retrieving previous snapshot...")
+            previous_snapshot = tracker.get_last_snapshot()
+
+            # Calculate daily changes
+            logging.info("Calculating daily changes...")
+            daily_changes = tracker.calculate_daily_changes(current_snapshot, previous_snapshot)
+
+            # Save current snapshot
+            logging.info("Saving current snapshot...")
+            tracker.save_snapshot(current_snapshot)
+
+            # Save position history (individual stock values)
+            logging.info("Saving position history...")
+            tracker.save_position_history(current_snapshot)
+
+            # Save daily changes
+            if daily_changes:
+                tracker.save_daily_changes(daily_changes)
+
+                if daily_changes['is_first_run']:
+                    print("✅ First snapshot created - historical tracking started!")
+                    logging.info("First snapshot created successfully")
+                else:
+                    print(f"✅ Daily changes calculated (vs {daily_changes['prev_date']})")
+                    print(f"   Portfolio Value Change: ${daily_changes['value_change']:,.2f} ({daily_changes['value_change_pct']:+.2f}%)")
+                    logging.info(f"Daily changes saved: {daily_changes['date']} vs {daily_changes['prev_date']}")
+
+            # Generate trend chart
+            logging.info("Generating trend chart...")
+            tracker.generate_trend_chart(filename=str(trend_chart_path), days=90)
+
+        except Exception as e:
+            logging.error(f"Error in historical tracking: {e}", exc_info=True)
+            logging.warning("Continuing without historical tracking...")
+    else:
+        logging.warning("Historical tracking skipped - Sheets service not available")
+        logging.warning("This means snapshots and daily changes will NOT be saved to Google Sheets")
+
+    # Save report to CSV (Local)
+    report_csv_path = base_dir / "portfolio_report.csv"
+    metrics.to_csv(str(report_csv_path), index=False)
+    print(f"Saved CSV report to {report_csv_path}")
+    
+    # Save report to Excel (Cloud/Local)
+    report_xlsx_path = base_dir / "portfolio_report.xlsx"
+    try:
+        with pd.ExcelWriter(report_xlsx_path, engine='openpyxl') as writer:
+            metrics.to_excel(writer, sheet_name='Portfolio Metrics', index=False)
+            get_column_definitions().to_excel(writer, sheet_name='Definitions', index=False)
+        print(f"Saved Excel report to {report_xlsx_path}")
+    except Exception as e:
+        print(f"Error saving Excel report: {e}")
+
+    # Cloud Actions: Upload and Email
+    if ENABLE_CLOUD:
+        # Upload to Drive
+        if drive_client:
+            # Upload Excel file instead of CSV
+            drive_client.upload_file(str(report_xlsx_path), folder_id=FOLDER_ID)
+            if backtest_plot_path.exists():
+                drive_client.upload_file(str(backtest_plot_path), folder_id=FOLDER_ID)
+            if trend_chart_path.exists():
+                drive_client.upload_file(str(trend_chart_path), folder_id=FOLDER_ID)
+
+        # Send Email
+        if email_client:
+            # Build email body with daily changes if available
+            email_body = format_email_with_changes(summary_str, dashboard_str, daily_changes)
+
+            to_email = os.environ.get("EMAIL_TO", email_client.username)
+            attachments = [str(report_xlsx_path)] # Attach Excel
+            if backtest_plot_path.exists():
+                attachments.append(str(backtest_plot_path))
+            if trend_chart_path.exists():
+                attachments.append(str(trend_chart_path))
+
+            # Determine subject based on day of week
+            from datetime import datetime
+            day_of_week = datetime.now().strftime('%A')
+            if day_of_week == 'Monday':
+                subject = "Weekly Portfolio Summary + Daily Update"
+            else:
+                subject = "Daily Portfolio Report"
+
+            email_client.send_email(subject, email_body, to_email, attachments=attachments)
+
     print("\n" + "="*80)
     print("✅ Portfolio analysis complete!")
     print("="*80)
+
+
+if __name__ == "__main__":
+    main()
