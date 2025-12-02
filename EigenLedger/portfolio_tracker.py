@@ -454,7 +454,15 @@ def main():
     print("="*80)
     # Reorder columns for readability
     cols = ["Ticker", "Qty", "Purch Date", "Purch Price", "Cost Basis", "Curr Price", "Mkt Value", "Unrealized P&L", "P&L %", "Div Income (4 weeks)", "Div Income to date", "Total Ret ($)", "Total Ret (%)", "Yield on Cost", "CAGR", "Beta"]
-    dashboard_str = metrics[cols].to_string(index=False)
+    
+    # Create formatted version for Output (Console, CSV, Excel)
+    display_metrics = metrics.copy()
+    currency_cols = ["Purch Price", "Cost Basis", "Curr Price", "Mkt Value", "Unrealized P&L", 
+                     "Div Income (4 weeks)", "Div Income to date", "Total Ret ($)"]
+    for col in currency_cols:
+        display_metrics[col] = display_metrics[col].apply(lambda x: f"${x:,.2f}")
+
+    dashboard_str = display_metrics[cols].to_string(index=False)
     print(dashboard_str)
 
     print("\n" + "="*80)
@@ -554,14 +562,14 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
 
     # Save report to CSV (Local)
     report_csv_path = base_dir / "portfolio_report.csv"
-    metrics.to_csv(str(report_csv_path), index=False)
+    display_metrics.to_csv(str(report_csv_path), index=False)
     print(f"Saved CSV report to {report_csv_path}")
     
     # Save report to Excel (Cloud/Local)
     report_xlsx_path = base_dir / "portfolio_report.xlsx"
     try:
         with pd.ExcelWriter(report_xlsx_path, engine='openpyxl') as writer:
-            metrics.to_excel(writer, sheet_name='Portfolio Metrics', index=False)
+            display_metrics.to_excel(writer, sheet_name='Portfolio Metrics', index=False)
             get_column_definitions().to_excel(writer, sheet_name='Definitions', index=False)
         print(f"Saved Excel report to {report_xlsx_path}")
     except Exception as e:
