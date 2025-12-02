@@ -598,7 +598,11 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
             else:
                 subject = "Daily Portfolio Report"
 
-            email_client.send_email(subject, email_body, to_email, attachments=attachments)
+            print(f"Attempting to send email to {to_email}...")
+            if email_client.send_email(subject, email_body, to_email, attachments=attachments):
+                print("✅ Email sent successfully!")
+            else:
+                print("❌ Failed to send email. Check logs for details.")
 
     print("\n" + "="*80)
     print("✅ Portfolio analysis complete!")
