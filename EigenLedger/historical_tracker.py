@@ -123,7 +123,7 @@ class HistoricalTracker:
                     'market_value': row['Mkt Value'],
                     'unrealized_pl': row['Unrealized P&L'],
                     'pl_pct': float(row['P&L %'].rstrip('%')),
-                    'dividend_income': row['Div Income'],
+                    'dividend_income': row['Div Income to date'],
                     'total_return': row['Total Ret ($)'],
                     'total_return_pct': float(row['Total Ret (%)'].rstrip('%')),
                     'yield_on_cost': float(row['Yield on Cost'].rstrip('%')),
@@ -136,7 +136,7 @@ class HistoricalTracker:
             total_value = metrics_df['Mkt Value'].sum()
             unrealized_pl = metrics_df['Unrealized P&L'].sum()
             unrealized_pl_pct = (unrealized_pl / total_cost * 100) if total_cost > 0 else 0
-            dividend_income = metrics_df['Div Income'].sum()
+            dividend_income = metrics_df['Div Income to date'].sum()
             total_return = unrealized_pl + dividend_income
             total_return_pct = (total_return / total_cost * 100) if total_cost > 0 else 0
 
