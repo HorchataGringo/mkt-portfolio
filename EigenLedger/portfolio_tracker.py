@@ -308,9 +308,12 @@ class BacktestEngine:
             plt.plot(self.benchmark_value_history.index, self.benchmark_value_history.values, 
                      label='SPY Benchmark', linewidth=2, color='#E74C3C', linestyle='--')
         
+        import matplotlib.ticker as mtick
+        
         plt.title('Portfolio Historical Performance (Buy & Hold)', fontsize=16, fontweight='bold')
         plt.xlabel('Date', fontsize=12)
         plt.ylabel('Portfolio Value ($)', fontsize=12)
+        plt.gca().yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
         plt.grid(True, alpha=0.3)
         plt.legend(fontsize=12)
         plt.tight_layout()

@@ -503,9 +503,12 @@ class HistoricalTracker:
             plt.plot(dates, values_list, label='Portfolio Value', linewidth=2, color='#2E86C1', marker='o', markersize=4)
             plt.plot(dates, cost_basis_list, label='Cost Basis', linewidth=2, color='#E74C3C', linestyle='--')
 
+            import matplotlib.ticker as mtick
+
             plt.title(f'Portfolio Performance - Last {days} Days', fontsize=16, fontweight='bold')
             plt.xlabel('Date', fontsize=12)
             plt.ylabel('Value ($)', fontsize=12)
+            plt.gca().yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
             plt.grid(True, alpha=0.3)
             plt.legend(fontsize=12)
             plt.xticks(rotation=45)
