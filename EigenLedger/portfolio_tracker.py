@@ -20,6 +20,26 @@ def load_portfolio(filepath):
         print(f"Error loading portfolio: {e}")
         return pd.DataFrame()
 
+def get_column_definitions():
+    return pd.DataFrame([
+        {"Column": "Ticker", "Definition": "Stock Symbol"},
+        {"Column": "Qty", "Definition": "Quantity of shares held"},
+        {"Column": "Purch Date", "Definition": "Date of purchase"},
+        {"Column": "Purch Price", "Definition": "Price per share at purchase"},
+        {"Column": "Cost Basis", "Definition": "Total cost of investment (Qty * Purch Price)"},
+        {"Column": "Curr Price", "Definition": "Current market price per share"},
+        {"Column": "Mkt Value", "Definition": "Current market value of position (Qty * Curr Price)"},
+        {"Column": "Unrealized P&L", "Definition": "Profit or Loss (Mkt Value - Cost Basis)"},
+        {"Column": "P&L %", "Definition": "Percentage Profit or Loss"},
+        {"Column": "Div Income (4 weeks)", "Definition": "Dividends received in the last 4 weeks"},
+        {"Column": "Div Income to date", "Definition": "Total dividends received since purchase"},
+        {"Column": "Total Ret ($)", "Definition": "Total Return in dollars (Unrealized P&L + Div Income)"},
+        {"Column": "Total Ret (%)", "Definition": "Total Return percentage"},
+        {"Column": "Yield on Cost", "Definition": "Annualized dividend yield based on cost basis"},
+        {"Column": "CAGR", "Definition": "Compound Annual Growth Rate"},
+        {"Column": "Beta", "Definition": "Volatility relative to SPY"}
+    ])
+
 def get_portfolio_metrics(portfolio_df):
     tickers = portfolio_df['Tickers'].unique().tolist()
     
@@ -75,9 +95,16 @@ def get_portfolio_metrics(portfolio_df):
         
         # 3. Dividend Income
         ticker_divs = dividends[ticker]
+        
+        # Div Income to date
         relevant_divs = ticker_divs[ticker_divs.index >= actual_purchase_date]
         divs_per_share = relevant_divs.sum()
         total_div_income = divs_per_share * qty
+        
+        # Div Income (4 weeks)
+        four_weeks_ago = datetime.now() - timedelta(weeks=4)
+        recent_divs = ticker_divs[ticker_divs.index >= four_weeks_ago]
+        recent_divs_income = recent_divs.sum() * qty
         
         # 4. Total Return
         total_return = unrealized_pl + total_div_income
@@ -125,7 +152,8 @@ def get_portfolio_metrics(portfolio_df):
             "Mkt Value": round(market_value, 2),
             "Unrealized P&L": round(unrealized_pl, 2),
             "P&L %": f"{round(unrealized_pl_pct, 2)}%",
-            "Div Income": round(total_div_income, 2),
+            "Div Income (4 weeks)": round(recent_divs_income, 2),
+            "Div Income to date": round(total_div_income, 2),
             "Total Ret ($)": round(total_return, 2),
             "Total Ret (%)": f"{round(total_return_pct, 2)}%",
             "Yield on Cost": f"{round(yield_on_cost, 2)}%",
@@ -292,7 +320,7 @@ if __name__ == "__main__":
         print("📊 PORTFOLIO DASHBOARD")
         print("="*80)
         # Reorder columns for readability
-        cols = ["Ticker", "Qty", "Purch Date", "Purch Price", "Curr Price", "Cost Basis", "Mkt Value", "P&L %", "Div Income", "Total Ret (%)", "Yield on Cost", "CAGR", "Beta"]
+        cols = ["Ticker", "Qty", "Purch Date", "Purch Price", "Cost Basis", "Curr Price", "Mkt Value", "Unrealized P&L", "P&L %", "Div Income (4 weeks)", "Div Income to date", "Total Ret ($)", "Total Ret (%)", "Yield on Cost", "CAGR", "Beta"]
         dashboard_str = metrics[cols].to_string(index=False)
         print(dashboard_str)
         
@@ -301,7 +329,7 @@ if __name__ == "__main__":
         print("="*80)
         total_invested = metrics["Cost Basis"].sum()
         total_value = metrics["Mkt Value"].sum()
-        total_divs = metrics["Div Income"].sum()
+        total_divs = metrics["Div Income to date"].sum()
         total_pl = total_value - total_invested
         total_ret = total_pl + total_divs
         
@@ -325,15 +353,27 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
         backtest_plot_path = os.path.join(base_dir, "portfolio_backtest.png")
         engine.plot_results(backtest_plot_path)
 
+        # Save report to CSV (Local)
+        report_csv_path = os.path.join(base_dir, "portfolio_report.csv")
+        metrics.to_csv(report_csv_path, index=False)
+        print(f"Saved CSV report to {report_csv_path}")
+        
+        # Save report to Excel (Cloud/Local)
+        report_xlsx_path = os.path.join(base_dir, "portfolio_report.xlsx")
+        try:
+            with pd.ExcelWriter(report_xlsx_path, engine='openpyxl') as writer:
+                metrics.to_excel(writer, sheet_name='Portfolio Metrics', index=False)
+                get_column_definitions().to_excel(writer, sheet_name='Definitions', index=False)
+            print(f"Saved Excel report to {report_xlsx_path}")
+        except Exception as e:
+            print(f"Error saving Excel report: {e}")
+
         # Cloud Actions: Upload and Email
         if ENABLE_CLOUD:
-            # Save report to CSV
-            report_path = os.path.join(base_dir, "portfolio_report.csv")
-            metrics.to_csv(report_path, index=False)
-            
             # Upload to Drive
             if drive_client:
-                drive_client.upload_file(report_path, folder_id=FOLDER_ID)
+                # Upload Excel file instead of CSV
+                drive_client.upload_file(report_xlsx_path, folder_id=FOLDER_ID)
                 if os.path.exists(backtest_plot_path):
                     drive_client.upload_file(backtest_plot_path, folder_id=FOLDER_ID)
                 
@@ -341,7 +381,7 @@ Total Return:     ${total_ret:,.2f} ({(total_ret/total_invested)*100:.2f}%)
             if email_client:
                 email_body = f"Daily Portfolio Update:\n\n{summary_str}\n\nDashboard:\n{dashboard_str}"
                 to_email = os.environ.get("EMAIL_TO", email_client.username)
-                attachments = [report_path]
+                attachments = [report_xlsx_path] # Attach Excel
                 if os.path.exists(backtest_plot_path):
                     attachments.append(backtest_plot_path)
                 email_client.send_email("Daily Portfolio Report", email_body, to_email, attachments=attachments)

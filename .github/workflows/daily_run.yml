@@ -6,6 +6,9 @@ on:
     - cron: '0 13 * * *'
   workflow_dispatch: # Allows manual trigger
 
+permissions:
+  contents: write
+
 jobs:
   run-tracker:
     runs-on: ubuntu-latest
@@ -40,3 +43,11 @@ jobs:
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_TO: ${{ secrets.EMAIL_TO }}
       run: poetry run python EigenLedger/portfolio_tracker.py
+
+    - name: Commit and Push Report
+      run: |
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add portfolio_report.csv portfolio_report.xlsx
+        git commit -m "Update portfolio report [skip ci]" || echo "No changes to commit"
+        git push
